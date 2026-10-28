@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider 可暴露的目录白名单：只放成绩图，别的一概不给 -->
+<paths>
+    <files-path name="shots" path="shots/" />
+    <cache-path name="cache" path="." />
+</paths>

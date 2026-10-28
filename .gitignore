@@ -1,0 +1,32 @@
+# 构建产物
+build/
+app/build/
+*.apk
+*.aab
+*.dex
+
+# Gradle / Kotlin 缓存
+.gradle/
+.kotlin/
+local.properties
+captures/
+.cxx/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# 编辑器 / 系统
+.idea/
+*.iml
+.DS_Store
+*.swp
+
+# 工作区临时
+*.log.tmp
+
+# 二进制资产 / 运行时（可由 tools/pack_*.sh 重新生成，不入库）
+app/src/main/assets/*.zip
+app/src/main/jniLibs/**/*.so
