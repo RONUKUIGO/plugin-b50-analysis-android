@@ -48,7 +48,9 @@ python3 tools/pack_pycode.py           # py/ → pycode.zip
 1. `app/build.gradle.kts`：`versionCode +1`、`versionName` 改新版本号；
 2. 素材变了 → `ResourceInstaller.PACK_VERSION +1` 并重打 `pack.zip`；py 变了 → `PythonRunner.PY_VERSION +1` 并重打 `pycode.zip`；
 3. `python3 tools/status.py` 必须 **全绿（0 提醒）**；
-4. `sh tools/build_android.sh --release`（签名用 `keystore.properties`；没有会回落 debug 签名，**能装不能发**）；
+4. `sh tools/build_android.sh --release`（签名用 `keystore.properties`；没有会回落 debug 签名，**能装不能发**）
+   —— 产物回拷到 `outputs/apk/b50-roast-release.apk`；若直接 `./gradlew :app:assembleRelease`，
+   产物在 `app/build/outputs/apk/release/app-release.apk`（**先 `rm -rf app/build/outputs` 再编，否则增量构建会让包翻倍**）；
 5. 验签 + 验版本号：
    ```bash
    apksigner verify --print-certs --verbose outputs/apk/b50-roast-release.apk
