@@ -286,10 +286,11 @@ P=$(pidof com.b50.roast); ls /proc/$P/root/data/data/com.b50.roast/files/shots/
    **缺口（实测）**：`app/build.gradle.kts` 只有 `buildTypes`，**没有 `signingConfigs`** ——
    release 包目前是未签名/沿用 debug key，发布前必须加签名（新 keystore + `assembleRelease`）。
    另外确认 `PACK_VERSION`(34274) / `PY_VERSION`(7) 是否需要动（素材/py 没变就不动）。
-5. 🚧 **发布渠道 = fork 到自己账号**（用户 2026-10-28 定），协议/README 已写好，剩下 push 动作。
-   已完成：`LICENSE`（MIT）/ `THIRD_PARTY_NOTICES.md` / 对外 `README.md`（内部开发文档移到 `docs/DEVELOPMENT.md`）。
-   待办：`git remote add` + `push`（见「发布准备」小节的命令），以及 Release 页上传 APK。
-   ~~原记录：上游项目下建分支（需 HanYaaaaaaa 授权）—— 已按用户决定改为 fork。~~
+5. ✅ **已公开发布（2026-10-28）** —— 仓库 https://github.com/RONUKUIGO/plugin-b50-analysis-android
+   （public，默认分支 `main`，85 个文件，topics: maimai / maimai-dx / android / jetpack-compose / kotlin）
+   Release **v1.5**：https://github.com/RONUKUIGO/plugin-b50-analysis-android/releases/tag/v1.5
+   附件 `b50-roast-release.apk` 57,139,194 B，GitHub 记录的 digest = sha256 `0a06b1a4…0365e2`（与本地产物一致），公网下载实测 HTTP 200 / Content-Length 57139194。
+   推送方式：设备内装 `gh`（2.45.0）走 **OAuth device flow** 登录（账号 RONUKUIGO），全程没有用到 SSH key 或手贴 token。
    **缺口（实测）**：`b50-android/` 里**没有 LICENSE、没有 THIRD_PARTY_NOTICES.md**（这两份只存在于归档的桌面版）。
    发布三件套：
    - **协议**：上游 MIT（`Copyright (c) 2026 HanYaaaaaaa`），我们 vendored 了 `py/vendor/mai/` 的 4 个文件，
@@ -419,7 +420,7 @@ apksigner verify --print-certs --verbose b50-roast-release.apk
 | `README.md` | 全新**对外**版：功能、系统要求、安装、首次使用 4 步、隐私与权限、额度规则、从源码构建（assets 不入库，需跑 4 个脚本）、目录结构、已知限制、许可与致谢、免责声明 |
 | `docs/DEVELOPMENT.md` | 原内部 README 平移（构建环境 / aapt2 / 编译期坑 / 源码地图），顶部指向新 README |
 
-### 剩下 3 步（都在用户账号侧，本机没有凭据）
+### 已完成发布（原「剩下 3 步」记录保留，供换机器时复用）
 
 ```bash
 cd /storage/emulated/0/Tools/LSPilot/projects/b50-android
