@@ -186,8 +186,17 @@ def main():
         render.OUT_WIDTH = width
         img = render.render_image(context, analysis, assets)
         os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
-        img.save(out_path)
-        print("OK %s %dx%d" % (out_path, img.width, img.height))
+        # 按扩展名决定保存格式：PNG 无损（可带 alpha）；JPG 必须转 RGB（JPEG 不支持 alpha）；
+        # WebP 两者都支持。质量统一 92 —— 和 PNG 肉眼看不出差别，体积小一个量级。
+        ext = os.path.splitext(out_path)[1].lower()
+        if ext in (".jpg", ".jpeg"):
+            img.convert("RGB").save(out_path, format="JPEG", quality=92,
+                                    optimize=True, progressive=True)
+        elif ext == ".webp":
+            img.save(out_path, format="WEBP", quality=92, method=4)
+        else:
+            img.save(out_path, format="PNG")
+        print("OK %s %dx%d %s" % (out_path, img.width, img.height, (ext or ".png").lstrip(".")))
         return 0
     except Exception:
         print("ERROR " + traceback.format_exc().replace("\n", " | ")[:1200])

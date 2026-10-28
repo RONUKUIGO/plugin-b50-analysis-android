@@ -21,7 +21,7 @@ class PythonRunner(private val ctx: Context) {
     companion object {
         private const val TAG = "B50Py"
         /** 与 ResourceInstaller.PACK_VERSION 保持同步 */
-        const val PY_VERSION = "6"
+        const val PY_VERSION = "7"
         private const val NATIVE_BIN = "libpy_home.so"
     }
 

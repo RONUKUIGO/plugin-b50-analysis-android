@@ -7,12 +7,28 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.b50.roast.data.*
 import com.b50.roast.render.B50Renderer
+import com.b50.roast.service.RenderKeepAlive
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
+
+/**
+ * 界面可见性开关（MainActivity 的 onResume/onPause 维护）。
+ *
+ * 用途只有一个：出图结束的那一刻判断"用弹窗还是用通知告诉用户"——
+ * 人就在界面上 → 弹窗；人已经切走了 → 通知（这也是用户 2026-10-28 的要求）。
+ * 不用 ProcessLifecycleOwner 是为了少一个依赖，Activity 的 onResume/onPause 足够准。
+ */
+object AppForeground {
+    @Volatile
+    var visible: Boolean = false
+}
+
+/** 一次性「出图完成」事件：界面可见时由 UI 消费并弹窗 */
+data class DoneEvent(val info: String, val warn: String = "")
 
 /**
  * 单一状态持有者。刻意不用 ViewModel：整页只有一个屏，状态量不大，
@@ -188,6 +204,11 @@ class AppState(private val appContext: Context) {
     var llmProvider by mutableStateOf(
         (prefs.getString("llm_provider", "") ?: "").ifBlank {
             LlmPresets.matchByUrl(llmUrl)?.id ?: LlmPresets.CUSTOM.id
+        }.let { id ->
+            // 预置表删过供应商（2026-10-28 只留 5 家）：旧版本存下的 id 可能已经不在表里。
+            // 这里回落到 CUSTOM —— url/path/key/model 是另外四个 prefs 字段，用户填的值一个都不会丢，
+            // 只是 chip 高亮回到「自定义」，避免出现「一个都没选中」的怪状态。
+            if (LlmPresets.isKnown(id)) id else LlmPresets.CUSTOM.id
         }
     )
         private set
@@ -443,7 +464,16 @@ class AppState(private val appContext: Context) {
                 if (avQq.isNotBlank() && avQq.all { it.isDigit() }) {
                     pyRunner.ensureAvatar(res.root(), avQq)
                 }
-                val out = File(appContext.filesDir, "shots/b50_" + System.currentTimeMillis() + ".png")
+                // 扩展名就是格式：render_worker.py 按扩展名决定 Pillow 用哪种编码
+                val ext = when (format.trim().lowercase()) {
+                    "jpg", "jpeg" -> "jpg"
+                    "webp" -> "webp"
+                    else -> "png"
+                }
+                val out = File(
+                    appContext.filesDir,
+                    "shots/b50_" + System.currentTimeMillis() + "." + ext,
+                )
                 val r = pyRunner.render(
                     recordsJson = records,
                     musicJson = musicJson,
@@ -527,6 +557,12 @@ class AppState(private val appContext: Context) {
         }
         if (!pyReady) installPython()
 
+        // 出图要 20~60 秒：先挂前台服务保活 + 常驻进度通知，
+        // 这样用户切去微信也不会被 MIUI 冻住（实测没这层会被 background 冻结）。
+        val shotBefore = lastShot
+        RoastNotify.ensureChannels(appContext)
+        RenderKeepAlive.start(appContext)
+
         rendering = true
         renderError = ""
         try {
@@ -538,7 +574,7 @@ class AppState(private val appContext: Context) {
             }
 
             // ---- 1. 让 Python 把 7 个分区压成提示词 ----
-            aiStatus = "正在整理成绩数据…"
+            setStatus("正在整理成绩数据…")
             val promptFile = File(appContext.cacheDir, "roast_prompt.json")
             val promptOk = withContext(Dispatchers.IO) {
                 pyRunner.makePrompt(
@@ -551,7 +587,10 @@ class AppState(private val appContext: Context) {
                     versions = data.currentVersions.joinToString("|"),
                     tone = tone,
                     angle = angle,
-                    words = words,
+                    // 字数框在界面上允许被清空（用户要重新输入时必然经过空态）。
+                    // 空串直接喂给 Python 会走 parse_words 的默认值 (150,300)，
+                    // 和界面上"默认 600"的语义冲突 —— 这里统一兜底成 600。
+                    words = words.trim().ifBlank { "600" },
                 )
             }
             if (!promptOk) {
@@ -565,7 +604,7 @@ class AppState(private val appContext: Context) {
                 " user=" + userPrompt.length + " 字")
 
             // ---- 2. 调 LLM ----
-            aiStatus = "AI 正在写锐评…"
+            setStatus("AI 正在写锐评…")
             val raw = withContext(Dispatchers.IO) {
                 LlmClient.chat(
                     baseUrl = llmUrl,
@@ -580,7 +619,7 @@ class AppState(private val appContext: Context) {
             android.util.Log.w("B50Roast", "锐评正文 " + raw.length + " 字符")
 
             // ---- 3. 渲染 ----
-            aiStatus = "正在出图…"
+            setStatus("正在出图…")
             // 出图不出网、不扣任何额度
             return renderWithPython(raw, outWidth)
         } catch (e: Exception) {
@@ -599,6 +638,37 @@ class AppState(private val appContext: Context) {
         } finally {
             rendering = false
             aiStatus = ""
+            RenderKeepAlive.stop(appContext)
+            finishNotify(shotBefore)
+        }
+    }
+
+    /** aiStatus 同时刷到常驻通知上（出图过程中才有通知可更新） */
+    private fun setStatus(text: String) {
+        aiStatus = text
+        if (rendering) RoastNotify.updateProgress(appContext, text)
+    }
+
+    /**
+     * 出图收尾：决定"用弹窗还是用通知"告诉用户。
+     *   · 界面可见 → 弹窗（用户就在看，通知会重复打扰）
+     *   · 界面不可见 → 通知（用户已经去干别的了）
+     */
+    private fun finishNotify(shotBefore: File?) {
+        val produced = lastShot != null && lastShot != shotBefore
+        val visible = AppForeground.visible
+        if (produced) {
+            if (visible) {
+                // 界面可见：清掉进度/遗留的完成通知，改用弹窗（通知+弹窗双重打扰很烦）
+                RoastNotify.cancelProgress(appContext)
+                RoastNotify.cancelDone(appContext)
+                doneEvent = DoneEvent(renderInfo, renderError)
+            } else {
+                RoastNotify.done(appContext, renderInfo, renderError)
+            }
+        } else {
+            if (visible) RoastNotify.cancelProgress(appContext)
+            else RoastNotify.fail(appContext, renderError)
         }
     }
 
@@ -609,6 +679,14 @@ class AppState(private val appContext: Context) {
 
     var rendering by mutableStateOf(false)
         private set
+
+    /** 出图完成事件（界面可见时才填）。UI 弹完要调 [consumeDone] 清掉，否则会重复弹 */
+    var doneEvent by mutableStateOf(null as DoneEvent?)
+        private set
+
+    fun consumeDone() {
+        doneEvent = null
+    }
     var lastShot by mutableStateOf(null as File?)
         private set
     var renderError by mutableStateOf("")

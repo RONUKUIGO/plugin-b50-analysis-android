@@ -2,6 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 出图要 20~60 秒，让用户能切去干别的：进度通知 + 前台服务保活 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <!-- 只有 Android 9 及以下写相册才需要（10+ 走 MediaStore，零权限） -->
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
@@ -25,6 +29,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 出图保活：只挂一条进度通知，业务仍在 Activity 的协程里跑（见 service/RenderKeepAlive.kt） -->
+        <service
+            android:name=".service.RenderKeepAlive"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <!-- 分享：App 私有目录里的图不能直接给别的 App 读，必须走 content:// -->
         <provider

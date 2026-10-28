@@ -30,3 +30,12 @@ __pycache__/
 # 二进制资产 / 运行时（可由 tools/pack_*.sh 重新生成，不入库）
 app/src/main/assets/*.zip
 app/src/main/jniLibs/**/*.so
+
+# 签名（绝不入库）
+keystore.properties
+*.jks
+*.keystore
+secure/
+
+# 构建运行日志
+runs/

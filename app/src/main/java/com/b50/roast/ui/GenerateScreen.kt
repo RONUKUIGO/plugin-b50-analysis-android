@@ -7,7 +7,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.setValue
@@ -15,23 +14,24 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.b50.roast.AppState
+import com.b50.roast.data.RoastPresets
 import com.b50.roast.data.Sections
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.Button
+import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
-import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
@@ -43,11 +43,34 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 fun GenerateScreen(
     state: AppState,
     scope: CoroutineScope,
-    onOpenSettings: () -> Unit,
+    // 弹窗一律交给根部的 AppOverlayHost 渲染：只有它在 Scaffold 之外，
+    // 遮罩才能盖住 TopAppBar / NavigationBar（详见 ui/Overlay.kt 顶部注释）
+    onOverlay: (AppOverlay) -> Unit,
+    onGoHistory: () -> Unit,
 ) {
     val cs = MiuixTheme.colorScheme
     val scroll = rememberScrollState()
-    var stalePrompt by remember { mutableStateOf(false) }
+
+    // 「写什么」卡里两个预设菜单的互斥开关：KEY_TONE / KEY_ANGLE / null（都收起）。
+    // 放在卡片外面（这个 Composable 顶层）而不是 ExpandablePicker 内部 ——
+    // 这样开一个会自动收起另一个，不会出现两个菜单同时展开。
+    var openPicker by remember { mutableStateOf(null as String?) }
+
+    // ── 参数落盘 ────────────────────────────────────────────────────────────
+    // 以前 words / tone / angle / width / format / sections 六个值只在 AppState 里
+    // 有 savePrefs()，但全工程**一次都没调用过**（saveNow() 也没有调用点）→
+    // 用户选完语气/角度，重启 App 就退回默认值。
+    // 现在这六个值一变就写一次（SharedPreferences#apply 是异步且去重的，代价可忽略）。
+    LaunchedEffect(state.words, state.tone, state.angle, state.width, state.format, state.sections) {
+        state.saveNow()
+    }
+
+    // 出图完成（状态在 AppState 里，界面可见时才填）→ 弹窗提示，并清掉事件避免重复弹
+    LaunchedEffect(state.doneEvent) {
+        val e = state.doneEvent ?: return@LaunchedEffect
+        state.consumeDone()
+        onOverlay(AppOverlay.Done(info = e.info, warn = e.warn, onOpenHistory = onGoHistory))
+    }
 
     // 进入页面先同步一次配额；之后每 30 秒刷一次，跨日 0 点会自动解锁按钮
     LaunchedEffect(Unit) {
@@ -101,30 +124,76 @@ fun GenerateScreen(
             }
         }
 
-        // ---------- 内容 ----------
+        // ---------- 内容 + 出图（原「出图设置」卡已并入这里） ----------
+        // 用户 2026-10-28 要求：
+        //   · 图片设置合并进「写什么」卡片 → 相关参数集中在一张卡里，少滚一屏；
+        //   · 语气/人设、角度改成按钮，点开就地展开**竖向**预设菜单（ExpandablePicker）；
+        //   · 字数只要一个小方框 → 行内右侧 92dp 的窄输入框，只收数字。
         SectionCard("写什么") {
-            LabeledField(
-                label = "字数",
-                value = state.words,
-                onValueChange = { state.words = it },
-                placeholder = "600",
-                modifier = Modifier.padding(horizontal = 12.dp),
-            )
-            LabeledField(
+            // 字数：一个小框就够（4 位数字上限；非数字直接过滤，避免喂给 Python 后 parse_words 回落默认）
+            Row(
+                Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("字数", fontSize = 15.sp, color = cs.onSurface, modifier = Modifier.weight(1f))
+                // 紧凑输入框（40dp）：miuix TextField 强压高度会把文字裁掉，见 Common.kt 里 CompactTextField 的注释
+                CompactTextField(
+                    value = state.words,
+                    onValueChange = { v -> state.words = v.filter { it.isDigit() } },
+                    modifier = Modifier.width(92.dp),
+                    maxLength = 4,
+                )
+                Text(
+                    "字",
+                    fontSize = 13.sp,
+                    color = cs.onSurfaceVariantSummary,
+                    modifier = Modifier.padding(start = 8.dp),
+                )
+            }
+            RowDivider()
+
+            // 语气 / 人设 → 按钮 + 竖向预设菜单
+            ExpandablePicker(
                 label = "语气 / 人设",
                 value = state.tone,
-                onValueChange = { state.tone = it },
-                placeholder = "留空=默认；例：雌小鬼、温柔猫娘",
-                singleLine = false,
-                modifier = Modifier.padding(horizontal = 12.dp),
+                presets = RoastPresets.TONES,
+                onSelect = { state.tone = it },
+                expanded = openPicker == KEY_TONE,
+                onToggle = { openPicker = if (openPicker == KEY_TONE) null else KEY_TONE },
             )
-            LabeledField(
+            RowDivider()
+
+            // 角度 → 同上（预设第一条就是原来的默认值「综合锐评」）
+            ExpandablePicker(
                 label = "角度",
                 value = state.angle,
-                onValueChange = { state.angle = it },
-                placeholder = "综合锐评 / 推分建议 / 配置诊断",
-                modifier = Modifier.padding(horizontal = 12.dp),
+                presets = RoastPresets.ANGLES,
+                onSelect = { state.angle = it },
+                expanded = openPicker == KEY_ANGLE,
+                onToggle = { openPicker = if (openPicker == KEY_ANGLE) null else KEY_ANGLE },
             )
+            RowDivider()
+
+            // 出图参数：宽度 / 格式（原来单独一张卡，现在并进来）
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                Text("图片宽度", fontSize = 12.sp, color = cs.onSurfaceVariantSummary)
+                Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("900", "1200", "1500").forEach { w ->
+                        Chip(w, state.width == w, onClick = { state.width = w })
+                    }
+                }
+                Text(
+                    "格式",
+                    fontSize = 12.sp,
+                    color = cs.onSurfaceVariantSummary,
+                    modifier = Modifier.padding(top = 12.dp),
+                )
+                Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("png", "jpg", "webp").forEach { f ->
+                        Chip(f.uppercase(), state.format == f, onClick = { state.format = f })
+                    }
+                }
+            }
         }
 
         // ---------- 分区 ----------
@@ -142,64 +211,73 @@ fun GenerateScreen(
             }
         }
 
-        // ---------- 出图设置 ----------
-        SectionCard("出图设置") {
-            Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                Text("图片宽度", fontSize = 12.sp, color = cs.onSurfaceVariantSummary)
-                Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("900", "1200", "1500").forEach { w ->
-                        Chip(w, state.width == w, onClick = { state.width = w })
-                    }
-                }
-                Text("格式", fontSize = 12.sp, color = cs.onSurfaceVariantSummary, modifier = Modifier.padding(top = 10.dp))
-                Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("png", "jpg", "webp").forEach { f ->
-                        Chip(f.uppercase(), state.format == f, onClick = { state.format = f })
-                    }
-                }
-            }
-        }
-
         // ---------- 出图按钮 ----------
         // 注意：出图**不消耗任何额度**。额度只跟「联网刷新成绩」有关，
         // 所以这里不受 quotaBlock 限制 —— 本地有数据就能出。
         Column(Modifier.fillMaxWidth().padding(vertical = 14.dp)) {
             val aiReady = state.llmReady()
             val hasData = state.hasLocalData()
-            val canGo = state.bound && aiReady && !state.rendering
-            Button(
-                onClick = {
-                    // 数据旧了先问一句，别偷偷联网花掉用户额度
-                    if (hasData && state.dataIsStale()) stalePrompt = true
-                    else scope.launch { state.roastAndRender(state.width) }
-                },
-                enabled = canGo,
-                modifier = Modifier.fillMaxWidth(),
+            // 注意：这里**不**把 rendering 算进 enabled —— 出图期间按钮保持可读的底色，
+            // 只在 onClick 里忽略重复点击（禁用会让底色/文字变淡，光效也会被一起压暗）。
+            val canGo = state.bound && aiReady
+            // 出图按钮 = 三层：底色 / 剧场光效 / 透明底按钮（文字在最上层）。
+            // 为什么拆层：光效要画在"底色之上、文字之下"，而 miuix Button 的底色是不透明的，
+            // 所以让 Button 自己透明、由外层 Box 提供底色 + 圆角裁剪，光扫过时文字不会被冲淡。
+            val btnColors = ButtonDefaults.buttonColors()
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(ButtonDefaults.CornerRadius))
+                    .background(if (canGo) btnColors.color else btnColors.disabledColor),
             ) {
-                Text(
-                    when {
-                        state.rendering -> state.aiStatus.ifBlank { "出图中…" }
-                        !state.bound -> "先去「授权」页绑定水鱼账号"
-                        !aiReady -> "先去「设置」配好 AI 接口"
-                        else -> "出图 + AI 锐评"
+                FlowLight(active = state.rendering, modifier = Modifier.matchParentSize())
+                Button(
+                    onClick = {
+                        if (state.rendering) return@Button   // 出图中：按钮照常显示进度，但不重复触发
+                        // 开发者模式：额度不限（quotaText 显示"不限次数"），所以没必要问
+                        // 「要刷新吗」—— 直接联网拉最新成绩再出图（refreshRecords 内部走 bypassQuota，
+                        // 既不查额度也不扣次数）。用户 2026-10-28 要求：开发者模式应该能直接在线生图。
+                        if (state.devUnlocked) {
+                            scope.launch { state.roastAndRender(state.width, refreshFirst = true) }
+                        } else if (hasData && state.dataIsStale()) {
+                            // 普通用户：数据旧了先问一句，别偷偷联网花掉额度
+                            onOverlay(
+                                AppOverlay.StaleData(
+                                    ageText = state.dataAgeText(),
+                                    quotaText = state.quotaText(),
+                                    canRefresh = state.quotaBlock.isBlank(),
+                                    onUseOld = {
+                                        scope.launch { state.roastAndRender(state.width) }
+                                    },
+                                    onRefresh = {
+                                        scope.launch {
+                                            state.roastAndRender(state.width, refreshFirst = true)
+                                        }
+                                    },
+                                )
+                            )
+                        } else {
+                            scope.launch { state.roastAndRender(state.width) }
+                        }
                     },
-                    fontWeight = FontWeight.Medium,
-                )
-            }
-
-            // 锐评进度（整理数据 → AI 写作 → 出图）
-            if (state.aiStatus.isNotBlank()) {
-                Row(
-                    Modifier.fillMaxWidth().padding(top = 12.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                    enabled = canGo,
+                    // 底色由外层 Box 画，这里只保留点击 / 水波纹 / 文字
+                    colors = ButtonDefaults.buttonColors(
+                        color = Color.Transparent,
+                        disabledColor = Color.Transparent,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp))
                     Text(
-                        state.aiStatus,
-                        fontSize = 13.sp,
-                        color = cs.primary,
-                        modifier = Modifier.padding(start = 10.dp),
+                        when {
+                            state.rendering -> state.aiStatus.ifBlank { "出图中…" }
+                            !state.bound -> "先去「授权」页绑定水鱼账号"
+                            !aiReady -> "先去「设置」配好 AI 接口"
+                            else -> "出图 + AI 锐评"
+                        },
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
@@ -244,80 +322,8 @@ fun GenerateScreen(
         Spacer(Modifier.height(24.dp))
     }
 
-    // 数据过期确认层：用户自己决定花不花这一次在线刷新额度
-    if (stalePrompt) {
-        StaleDataPrompt(
-            ageText = state.dataAgeText(),
-            quotaText = state.quotaText(),
-            canRefresh = state.quotaBlock.isBlank(),
-            onUseOld = {
-                stalePrompt = false
-                scope.launch { state.roastAndRender(state.width) }
-            },
-            onRefresh = {
-                stalePrompt = false
-                scope.launch { state.roastAndRender(state.width, refreshFirst = true) }
-            },
-            onDismiss = { stalePrompt = false },
-        )
-    }
 }
 
-/**
- * 「数据是 X 小时前的，要刷新吗」确认层。
- *
- * 用自制覆盖层而不是 Dialog：项目里没有 material 依赖，miuix 的弹窗 API 也没接，
- * 而 HistoryScreen 的预览层已经验证过这种写法在真机上没问题。
- */
-@Composable
-private fun StaleDataPrompt(
-    ageText: String,
-    quotaText: String,
-    canRefresh: Boolean,
-    onUseOld: () -> Unit,
-    onRefresh: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val cs = MiuixTheme.colorScheme
-    BackHandler { onDismiss() }
-
-    Box(
-        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)),
-        contentAlignment = androidx.compose.ui.Alignment.Center,
-    ) {
-        Card(Modifier.fillMaxWidth().padding(24.dp)) {
-            Column(Modifier.padding(18.dp)) {
-                Text("成绩数据是" + ageText, fontWeight = FontWeight.Medium, fontSize = 16.sp)
-                Text(
-                    "出图可以直接用这份旧数据，不会消耗次数；" +
-                        "也可以先拉一份最新的，那会消耗 1 次在线刷新额度。",
-                    fontSize = 13.sp,
-                    lineHeight = 20.sp,
-                    color = cs.onSurfaceVariantSummary,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
-                Text(
-                    quotaText,
-                    fontSize = 12.sp,
-                    color = if (canRefresh) cs.primary else cs.error,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
-                Row(
-                    Modifier.fillMaxWidth().padding(top = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Button(onClick = onUseOld, modifier = Modifier.weight(1f)) {
-                        Text("用旧数据出图")
-                    }
-                    Button(
-                        onClick = onRefresh,
-                        enabled = canRefresh,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Text(if (canRefresh) "先刷新再出图" else "额度已用完")
-                    }
-                }
-            }
-        }
-    }
-}
+/** 预设菜单的 key（互斥展开用） */
+private const val KEY_TONE = "tone"
+private const val KEY_ANGLE = "angle"

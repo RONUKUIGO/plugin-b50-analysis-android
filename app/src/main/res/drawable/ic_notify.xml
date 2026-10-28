@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  通知栏小图标（状态栏用的单色剪影）。
+  规范：24dp viewport、纯白填充、透明底 —— 系统会自动按主题着色（深色/浅色状态栏都认）。
+  形状 = 一个八分音符（和「锐评机/音乐」的语义一致）。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,3v10.55A4,4 0,1 0,14 17V7h4V3z" />
+</vector>

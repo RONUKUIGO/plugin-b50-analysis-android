@@ -110,6 +110,10 @@ REQUIRED = [
     "tools/pack_pycode.py",
     "tools/pack_assets.py",
     "tools/build_python_runtime.sh",
+    "tools/ascii_view.py",
+    "tools/shadow_probe.py",
+    "tools/make_icons.py",
+    "tools/reclaim_mem.sh",
     "HANDOFF.md",
     "README.md",
 ]
@@ -313,13 +317,17 @@ def check_docs():
     head("6. 文档与工具（接手先读这几个）")
     docs = [
         ("HANDOFF.md", "**权威交接文档**：已验证事实 / 架构 / 坑 / 文件索引 / 构建 / 调试 / 待办"),
-        ("README.md", "构建环境 + aapt2 + 编译期踩坑（架构现状以 HANDOFF 为准）"),
+        ("README.md", "对外 README（安装 / 隐私 / 许可）；开发文档见 docs/DEVELOPMENT.md"),
         ("py/README.md", "App 内嵌 Python 真源说明：来源、同步、改完做什么"),
         ("tools/pack_pycode.py", "py/ → pycode.zip 打包 + 一致性门禁"),
         ("tools/fetch_assets.py", "素材获取：本地/归档 zip/下载，证书过期也能下"),
         ("tools/pack_assets.py", "素材 → pack.zip（前置检查 + 产物校验 + 版本号一致性）"),
         ("tools/check_upstream.py", "上游同步：代码 4 文件三态比对 + miuix 版本"),
         ("tools/build_python_runtime.sh", "Python 运行时 → py_runtime.zip + jniLibs"),
+        ("tools/ascii_view.py", "截图 → ASCII 灰度图（不看图也能判断布局）"),
+        ("tools/shadow_probe.py", "像素探针：量底色/边缘剖面/阴影带/脏边"),
+        ("tools/make_icons.py", "启动图标生成 + 安全区/对比度/遮罩校验（18 个文件）"),
+        ("tools/reclaim_mem.sh", "回收内存：停 Gradle/Kotlin 守护进程 + am kill-all（含前后对比）"),
         ("tools/status.py", "本脚本"),
     ]
     for rel, desc in docs:

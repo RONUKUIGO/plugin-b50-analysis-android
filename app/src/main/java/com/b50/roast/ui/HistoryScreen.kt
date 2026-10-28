@@ -5,6 +5,7 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -49,14 +50,18 @@ private const val SHOT_ASPECT = 1200f / 2104f
  * 点格子弹出大图预览，可存相册 / 分享 / 删除。
  */
 @Composable
-fun HistoryScreen(state: AppState, scope: CoroutineScope) {
+fun HistoryScreen(
+    state: AppState,
+    scope: CoroutineScope,
+    // 大图预览改成根级浮层渲染（详见 ui/Overlay.kt）
+    onOverlay: (AppOverlay) -> Unit,
+) {
     val cs = MiuixTheme.colorScheme
     val store = state.shots
 
     var list by remember { mutableStateOf(emptyList<ShotItem>()) }
     var loading by remember { mutableStateOf(true) }
     var reload by remember { mutableStateOf(0) }
-    var preview by remember { mutableStateOf(null as ShotItem?) }
 
     // 进入页面（或 reload 变化）就扫一次盘。切 tab 时本屏会重建，所以每次进来都是新的
     LaunchedEffect(reload) {
@@ -104,27 +109,24 @@ fun HistoryScreen(state: AppState, scope: CoroutineScope) {
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             items(list, key = { it.name }) { item ->
-                ShotCell(item = item, store = store, onClick = { preview = item })
+                ShotCell(
+                    item = item,
+                    store = store,
+                    onClick = {
+                        onOverlay(
+                            AppOverlay.Preview(
+                                item = item,
+                                store = store,
+                                scope = scope,
+                                onDeleted = { reload++ },
+                            )
+                        )
+                    },
+                )
             }
         }
     }
 
-    // 返回栈第 3 层：预览层 → 关预览（比切 tab 更内层，所以放在这里注册）
-    BackHandler(enabled = preview != null) { preview = null }
-
-    // ---------- 大图预览层 ----------
-    preview?.let { item ->
-        PreviewOverlay(
-            item = item,
-            store = store,
-            scope = scope,
-            onClose = { preview = null },
-            onDeleted = {
-                preview = null
-                reload++
-            },
-        )
-    }
 }
 
 /** 一个格子：缩略图 + 时间水印 */
@@ -143,6 +145,9 @@ private fun ShotCell(item: ShotItem, store: ShotStore, onClick: () -> Unit) {
             .aspectRatio(SHOT_ASPECT)
             .clip(RoundedCornerShape(10.dp))
             .background(cs.surface)
+            // 发丝描边：成绩图都是浅底（#D1FDE7 这类），不加这 1dp，
+            // 浅色图与 #F7F7F7 页面会糊在一起（实测：边缘 1px 硬切、无过渡）
+            .border(1.dp, cs.onSurface.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
             .clickable(onClick = onClick),
     ) {
         val b = bmp
@@ -172,133 +177,6 @@ private fun ShotCell(item: ShotItem, store: ShotStore, onClick: () -> Unit) {
                 .background(Color.Black.copy(alpha = 0.45f))
                 .padding(horizontal = 4.dp, vertical = 2.dp),
         )
-    }
-}
-
-/** 大图预览 + 存相册 / 分享 / 删除 */
-@Composable
-private fun PreviewOverlay(
-    item: ShotItem,
-    store: ShotStore,
-    scope: CoroutineScope,
-    onClose: () -> Unit,
-    onDeleted: () -> Unit,
-) {
-    val cs = MiuixTheme.colorScheme
-    val ctx = LocalContext.current
-    var bmp by remember(item.name) { mutableStateOf(null as Bitmap?) }
-    var busy by remember { mutableStateOf(false) }
-    var msg by remember { mutableStateOf("") }
-    var confirmDelete by remember { mutableStateOf(false) }
-
-    LaunchedEffect(item.name) {
-        bmp = withContext(Dispatchers.IO) { store.full(item) }
-    }
-
-    fun say(s: String) {
-        msg = s
-        Toast.makeText(ctx, s, Toast.LENGTH_SHORT).show()
-    }
-
-    Box(
-        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)),
-        contentAlignment = Alignment.Center,
-    ) {
-        Card(Modifier.fillMaxWidth().padding(12.dp)) {
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 620.dp)
-                    .verticalScroll(rememberScrollState())
-                    .padding(12.dp),
-            ) {
-                // 标题行 + 关闭。操作区一律放在最上面，
-                // 因为图片本身比可视区高，按钮压在最底下会被挤出屏幕。
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(item.name, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                        Text(
-                            item.timeText + "  ·  " + item.sizeText,
-                            fontSize = 11.sp,
-                            color = cs.onSurfaceVariantSummary,
-                            modifier = Modifier.padding(top = 2.dp),
-                        )
-                    }
-                    Chip("关闭", false, onClick = onClose)
-                }
-
-                // ---------- 操作 ----------
-                Row(
-                    Modifier.fillMaxWidth().padding(top = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Chip("存相册", false, enabled = !busy, onClick = {
-                        scope.launch {
-                            busy = true
-                            val r = store.saveToGallery(item)
-                            busy = false
-                            say(r)
-                        }
-                    })
-                    Chip("分享", false, enabled = !busy, onClick = {
-                        val send = store.shareIntent(item)
-                        if (send == null) {
-                            say("生成分享链接失败")
-                        } else {
-                            runCatching { ctx.startActivity(send) }
-                                .onFailure { e -> say("打开发送面板失败：" + e.message) }
-                        }
-                    })
-                    Chip(if (confirmDelete) "确认删除" else "删除", confirmDelete, enabled = !busy, onClick = {
-                        if (!confirmDelete) {
-                            confirmDelete = true
-                            msg = "再点一次「确认删除」"
-                        } else {
-                            val ok = store.delete(item)
-                            Toast.makeText(
-                                ctx,
-                                if (ok) "已删除" else "删除失败",
-                                Toast.LENGTH_SHORT,
-                            ).show()
-                            if (ok) onDeleted() else { confirmDelete = false; msg = "删除失败" }
-                        }
-                    })
-                }
-
-                if (msg.isNotBlank()) {
-                    Text(
-                        msg,
-                        fontSize = 12.sp,
-                        color = cs.primary,
-                        modifier = Modifier.padding(top = 8.dp),
-                    )
-                }
-
-                // 图片放最后：比可见区高，靠滚动看全貌，操作按钮始终在上方
-                val b = bmp
-                if (b != null) {
-                    Image(
-                        bitmap = b.asImageBitmap(),
-                        contentDescription = item.name,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 10.dp)
-                            .clip(RoundedCornerShape(10.dp)),
-                    )
-                } else {
-                    Text(
-                        "加载中…",
-                        fontSize = 12.sp,
-                        color = cs.onSurfaceVariantSummary,
-                        modifier = Modifier.padding(vertical = 16.dp),
-                    )
-                }
-            }
-        }
     }
 }
 

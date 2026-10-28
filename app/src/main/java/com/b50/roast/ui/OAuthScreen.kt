@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -55,7 +56,12 @@ import java.util.Locale
  * 不经过任何本地 HTTP 服务。
  */
 @Composable
-fun OAuthScreen(state: AppState, scope: CoroutineScope) {
+fun OAuthScreen(
+    state: AppState,
+    scope: CoroutineScope,
+    // 设置入口：顶栏的小按钮已按用户要求去掉，统一从这一页进
+    onOpenSettings: () -> Unit,
+) {
     val cs = MiuixTheme.colorScheme
     val ctx = LocalContext.current
 
@@ -259,6 +265,22 @@ fun OAuthScreen(state: AppState, scope: CoroutineScope) {
                         modifier = Modifier.padding(top = 6.dp),
                     )
                 }
+            }
+        }
+
+        // ---------- 设置入口 ----------
+        // 用户要求：不要顶栏那个小按钮，入口放这里，做成列表行（整行可点，右侧箭头）
+        SectionCard("应用设置", "AI 供应商、接口参数、本地资源包都在里面") {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onOpenSettings)
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("打开设置", fontSize = 15.sp, color = cs.onSurface)
+                Text("›", fontSize = 18.sp, color = cs.onSurfaceVariantSummary)
             }
         }
 

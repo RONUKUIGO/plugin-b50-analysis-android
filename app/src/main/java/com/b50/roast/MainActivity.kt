@@ -1,10 +1,25 @@
 package com.b50.roast
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.PredictiveBackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -20,24 +35,31 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 import com.b50.roast.data.ResourceInstaller
+import com.b50.roast.ui.AppHeader
+import com.b50.roast.ui.AppOverlay
+import com.b50.roast.ui.AppOverlayHost
 import com.b50.roast.ui.GenerateScreen
 import com.b50.roast.ui.HistoryScreen
 import com.b50.roast.ui.OAuthScreen
+import com.b50.roast.ui.RowDivider
 import com.b50.roast.ui.SettingsScreen
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.NavigationBar
 import top.yukonga.miuix.kmp.basic.NavigationBarItem
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.basic.ArrowRight
 import top.yukonga.miuix.kmp.icon.basic.Check
@@ -50,8 +72,27 @@ import top.yukonga.miuix.kmp.theme.lightColorScheme
  * 用户要求的"浅色 + 底部导航"在这里落地。
  */
 class MainActivity : ComponentActivity() {
+
+    // 界面可见性：出图结束时 AppState 靠它决定"弹窗"还是"发通知"
+    override fun onResume() {
+        super.onResume()
+        AppForeground.visible = true
+    }
+
+    override fun onPause() {
+        super.onPause()
+        AppForeground.visible = false
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 浅色主题 → 状态栏/导航栏图标必须是深色，否则浅色图标压在 #F7F7F7 上看不清。
+        // 之前全工程一处都没设，全靠 Theme.Material.Light 的默认值（MIUI 上实测最右那颗
+        // 只有 L≈120~180，明显发虚）。这两行不改变布局/insets，只切图标明暗。
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = true
+            isAppearanceLightNavigationBars = true
+        }
         setContent {
             MiuixTheme(colors = lightColorScheme()) {
                 // Compose 没有「点输入框外面自动收起键盘」的内置行为，得在根部自己挂一个 tap 监听：
@@ -83,6 +124,21 @@ private enum class Tab(val label: String) {
 private fun AppRoot() {
     val ctx = LocalContext.current
     val state = remember { AppState(ctx.applicationContext) }
+
+    // ── Android 13+ 通知权限 ──
+    // 出图 20~60 秒，进度/完成都靠通知提醒；没有这个权限系统会静默丢弃（不报错，最难查）。
+    // 只在这里要一次：用户拒了也不影响出图，只是没有通知。
+    val notifPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> Log.w("B50Notify", "通知权限：$granted") }
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
 
     // ── 首启：把 assets/pack.zip（21 MB / 曲绘 1569 张）解压到 filesDir/res ──
     val installer = remember { ResourceInstaller(ctx.applicationContext) }
@@ -144,64 +200,146 @@ private fun AppRoot() {
         }
     }
 
-    // 返回栈第 1 层：设置页 → 关设置（而不是直接回桌面）
-    if (showSettings) {
-        BackHandler { showSettings = false }
-        SettingsScreen(state = state, scope = scope, onBack = { showSettings = false })
-        return
+    // ── 浮层状态：弹窗必须在 Scaffold 之外渲染 ──
+    // Scaffold 会把内容塞进 content 区，写在那里的遮罩永远盖不住 TopAppBar / NavigationBar。
+    // 旧写法实测：遮罩只从 y=406 开始，顶栏 0~406 全亮；放在根 Box 才是真正的最上层。
+    var overlay by remember { mutableStateOf(null as AppOverlay?) }
+    val dismissOverlay: () -> Unit = { overlay = null }
+
+    // ── 页面层级 ────────────────────────────────────────────────────────────
+    // 用户要求：点进一个界面要像"开了新标签页"，且预测性返回的动效要对。
+    // 结构 = 底层主界面（3 个 tab，切换带方向感）+ 上层设置页（从右滑入）。
+    // manifest 早就开了 enableOnBackInvokedCallback，但以前设置页是 if/else 直接换内容，
+    // 系统找不到"可以缩回去的那一页"，于是返回手势什么都没有 —— 这就是观感差的根因。
+    var backProgress by remember { mutableFloatStateOf(0f) }
+
+    PredictiveBackHandler(enabled = showSettings) { progress ->
+        try {
+            progress.collect { backProgress = it.progress }   // 手势中：跟手右移（0→1）
+            showSettings = false                              // 手势完成：真的关掉
+        } catch (_: CancellationException) {
+            // 手势取消 → 下一帧回到原位
+        } finally {
+            backProgress = 0f
+        }
     }
 
-    // 返回栈第 2 层：不在「生成」tab 时，返回先回「生成」，再按才是退出
-    BackHandler(enabled = tab != Tab.GENERATE) { tab = Tab.GENERATE }
+    Box(Modifier.fillMaxSize()) {
+        // ---------- 底层：主界面 ----------
+        // 不在「生成」tab 时，返回先回「生成」，再按才是退出
+        BackHandler(enabled = !showSettings && tab != Tab.GENERATE) { tab = Tab.GENERATE }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = "B50 锐评机",
-                subtitle = when (tab) {
-                    Tab.GENERATE -> "填 QQ 号，出图 + 锐评"
-                    Tab.HISTORY -> "最近生成的成绩图"
-                    Tab.OAUTH -> "水鱼账号授权"
-                },
-                actions = {
-                    Button(onClick = { showSettings = true }) { Text("设置") }
-                },
-            )
-        },
-        bottomBar = {
-            NavigationBar {
-                NavigationBarItem(
-                    selected = tab == Tab.GENERATE,
-                    onClick = { tab = Tab.GENERATE },
-                    icon = MiuixIcons.Basic.Search,
-                    label = Tab.GENERATE.label,
-                )
-                NavigationBarItem(
-                    selected = tab == Tab.HISTORY,
-                    onClick = { tab = Tab.HISTORY },
-                    icon = MiuixIcons.Basic.ArrowRight,
-                    label = Tab.HISTORY.label,
-                )
-                NavigationBarItem(
-                    selected = tab == Tab.OAUTH,
-                    onClick = { tab = Tab.OAUTH },
-                    icon = MiuixIcons.Basic.Check,
-                    label = Tab.OAUTH.label,
-                )
-            }
-        },
-    ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
-            when (tab) {
-                Tab.GENERATE -> GenerateScreen(
-                    state = state,
-                    scope = scope,
-                    onOpenSettings = { showSettings = true },
-                )
-                Tab.HISTORY -> HistoryScreen(state = state, scope = scope)
-                Tab.OAUTH -> OAuthScreen(state = state, scope = scope)
+        Scaffold(
+            topBar = {
+                // 顶栏 = 自己拼的 AppHeader（见 ui/Common.kt）。
+                // 换掉 miuix TopAppBar 的原因：它把"大标题上方 52dp"硬编码成大标题块的上内边距，
+                // 实测本机状态栏底(104px) 到标题第一笔之间有 159px 空白 —— 用户 2026-10-28
+                // 反馈"标题顶部留空太多"。AppHeader 把这段压到 8dp，整块顶栏从 408px 降到约 240px。
+                // 下面那条 1px 分割线保留：顶栏与内容同为 #F7F7F7，没有分界时滚动会糊在一起。
+                Column {
+                    AppHeader(
+                        title = "B50 锐评机",
+                        subtitle = when (tab) {
+                            Tab.GENERATE -> "填 QQ 号，出图 + 锐评"
+                            Tab.HISTORY -> "最近生成的成绩图"
+                            Tab.OAUTH -> "水鱼账号授权"
+                        },
+                        // 顶栏不再放「设置」小按钮：入口挪到授权页（用户 2026-10-28 要求）
+                    )
+                    RowDivider(startIndent = 0.dp)
+                }
+            },
+            bottomBar = {
+                NavigationBar {
+                    NavigationBarItem(
+                        selected = tab == Tab.GENERATE,
+                        onClick = { tab = Tab.GENERATE },
+                        icon = MiuixIcons.Basic.Search,
+                        label = Tab.GENERATE.label,
+                    )
+                    NavigationBarItem(
+                        selected = tab == Tab.HISTORY,
+                        onClick = { tab = Tab.HISTORY },
+                        icon = MiuixIcons.Basic.ArrowRight,
+                        label = Tab.HISTORY.label,
+                    )
+                    NavigationBarItem(
+                        selected = tab == Tab.OAUTH,
+                        onClick = { tab = Tab.OAUTH },
+                        icon = MiuixIcons.Basic.Check,
+                        label = Tab.OAUTH.label,
+                    )
+                }
+            },
+        ) { padding ->
+            Box(Modifier.fillMaxSize().padding(padding)) {
+                // tab 切换：短距离横向滑入 + 淡入，做出「换了一张标签页」的感觉
+                // （方向按 tab 序号决定，往右切就从右边进，往左切就从左边进）
+                AnimatedContent(
+                    targetState = tab,
+                    transitionSpec = {
+                        val dir = if (targetState.ordinal >= initialState.ordinal) 1 else -1
+                        (slideInHorizontally(tween(240)) { it * dir / 8 } + fadeIn(tween(180)))
+                            .togetherWith(
+                                slideOutHorizontally(tween(240)) { -it * dir / 8 } + fadeOut(tween(140))
+                            )
+                    },
+                    label = "tab-switch",
+                ) { t ->
+                    when (t) {
+                        Tab.GENERATE -> GenerateScreen(
+                            state = state,
+                            scope = scope,
+                            onOverlay = { overlay = it },
+                            onGoHistory = { tab = Tab.HISTORY },
+                        )
+                        Tab.HISTORY -> HistoryScreen(
+                            state = state,
+                            scope = scope,
+                            onOverlay = { overlay = it },
+                        )
+                        Tab.OAUTH -> OAuthScreen(
+                            state = state,
+                            scope = scope,
+                            onOpenSettings = { showSettings = true },
+                        )
+                    }
+                }
             }
         }
+
+        // ---------- 上层：设置页（"新标签页"从右侧滑入 + 预测性返回跟手） ----------
+        val enter by animateFloatAsState(
+            targetValue = if (showSettings) 1f else 0f,
+            animationSpec = tween(280, easing = FastOutSlowInEasing),
+            label = "settings-enter",
+        )
+        if (showSettings || enter > 0.01f) {
+            // 设置页也放进 Scaffold：底色统一（#F7F7F7，别再吃窗口的 #FAFAFA）、
+            // 状态栏 inset 正确（原来标题压在状态栏图标上）。
+            // 注意别传 containerColor = cs.background —— 那是 #FFFFFF，会和白卡片糊成一片。
+            Scaffold(
+                modifier = Modifier.graphicsLayer {
+                    // ① 进入：从右侧 30% 处滑到 0；② 预测性返回：跟着手指右移（最大 35% 宽），
+                    // 同时轻微缩小 + 变淡 —— 让用户清楚看到"这一页正在被推回去"，
+                    // 而不是像以前那样松手后突兀地啪一下消失。
+                    translationX = (1f - enter) * 0.30f * size.width +
+                        backProgress * 0.35f * size.width
+                    val sc = 1f - backProgress * 0.08f
+                    scaleX = sc
+                    scaleY = sc
+                    alpha = enter * (1f - backProgress * 0.15f)
+                    shadowElevation = 18.dp.toPx() * enter  // 让它真的"浮"在主界面之上
+                },
+            ) { padding ->
+                Box(Modifier.fillMaxSize().padding(padding)) {
+                    SettingsScreen(state = state, scope = scope)
+                }
+            }
+        }
+
+        // 最上层：全屏遮罩 + miuix Surface 浮层卡片（见 ui/Overlay.kt）
+        AppOverlayHost(overlay = overlay, onDismiss = dismissOverlay)
     }
 }
 

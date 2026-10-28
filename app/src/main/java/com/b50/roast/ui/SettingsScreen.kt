@@ -36,7 +36,6 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 fun SettingsScreen(
     state: AppState,
     scope: CoroutineScope,
-    onBack: () -> Unit,
 ) {
     val cs = MiuixTheme.colorScheme
     // 四个字段的编辑副本：key 里带上供应商 id，切供应商时自动重置成新预设的值
@@ -71,14 +70,15 @@ fun SettingsScreen(
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 12.dp),
     ) {
-        Row(
-            Modifier.fillMaxWidth().padding(vertical = 10.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-        ) {
-            Text("设置", fontSize = 20.sp, fontWeight = FontWeight.Medium)
-            Button(onClick = onBack) { Text("返回") }
-        }
+        // 标题行不再放「返回」按钮（用户 2026-10-28 要求）：
+        // 返回走系统手势/返回键 —— MainActivity 的 PredictiveBackHandler 已经接管，
+        // 叠层页会跟着手指右移缩回，比点按钮更符合"新标签页"的形态。
+        Text(
+            "设置",
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.padding(start = 4.dp, top = 12.dp, bottom = 6.dp),
+        )
 
         // ---------- 本地资源包 ----------
         SectionCard("本地资源包", "首次启动会把内置素材解压到本机，之后出图完全离线。cn: 后面是机台版本代号（上游素材版本）。") {
@@ -98,17 +98,29 @@ fun SettingsScreen(
         val cur = LlmPresets.byId(state.llmProvider)
         SectionCard("AI 供应商", "点一下自动填好基础地址、路径和常用模型，你只需要填 Key。") {
             Column(Modifier.padding(12.dp)) {
-                Row(
-                    Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    LlmPresets.ALL.forEach { p ->
-                        Chip(p.label, state.llmProvider == p.id, onClick = {
-                            state.switchLlmProvider(p.id)
-                            llmStatus = ""
-                            llmOk = false
-                        })
+                // 5 家预置横向可滚；「自定义」固定钉在右边。
+                // 以前它排在滚动行最末，被推到屏幕外 —— 一旦回落到 custom，
+                // 界面上看起来像「一个都没选中」，用户会以为坏了。
+                val pick: (String) -> Unit = { id ->
+                    state.switchLlmProvider(id)
+                    llmStatus = ""
+                    llmOk = false
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        LlmPresets.ALL.filter { it.id != LlmPresets.CUSTOM.id }.forEach { p ->
+                            Chip(p.label, state.llmProvider == p.id, onClick = { pick(p.id) })
+                        }
                     }
+                    Spacer(Modifier.width(8.dp))
+                    Chip(
+                        LlmPresets.CUSTOM.label,
+                        state.llmProvider == LlmPresets.CUSTOM.id,
+                        onClick = { pick(LlmPresets.CUSTOM.id) },
+                    )
                 }
                 if (cur.note.isNotBlank()) {
                     Text(
