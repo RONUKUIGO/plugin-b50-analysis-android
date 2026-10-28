@@ -87,7 +87,8 @@ python3 tools/pack_pycode.py         # py/ → app/src/main/assets/pycode.zip
 发布签名：把 `keystore.properties.template` 复制成 `keystore.properties` 填好（文件已在 `.gitignore` 里），
 `assembleRelease` 会自动用它签名；没有则回落 debug 签名。
 
-构建环境、aapt2 替换、编译期踩坑、源码地图 → 见 **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)**。
+构建环境、aapt2 替换、编译期踩坑、源码地图 → 见 **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)**；
+想接手维护（发版 SOP / 签名管理 / 踩过的坑 / 下一步）→ 见 **[docs/HANDOVER.md](docs/HANDOVER.md)**。
 
 ## 目录结构
 

@@ -41,11 +41,12 @@ App 在手机内独立完成整条链路：
 **功能已全部完成**，桌面版的核心链路在 App 内跑齐了：
 绑定 → 拉全量 → 规整 B50 → 7 分区上下文 → AI 写锐评 → 渲染出图 → 配额扣减。
 
-**当前阶段：打磨期（发布往后放）** —— 用户 2026-10-28 定：先把 App 打磨好再谈发布。
-第 7 节的 1/2/3 条（UI 阴影、供应商表、图标）、追加的 6/7/8 条（状态栏、设置入口、导航动效）
-以及第 9/10 条（顶栏留白、卡片重构）**已完成**；
-第 4/5 条（App 1.5 首发 + 上游仓库发布）**按用户要求挂起**，等打磨完再动。
-下一步建议：让用户实际用一轮，按手感微调（转场时长、滑入幅度），以及继续收集「用着别扭」的点。
+**当前阶段：v1.5 已公开发布（2026-10-28）** —— 仓库 `RONUKUIGO/plugin-b50-analysis-android`（public，`main`），
+Release `v1.5` 附件 `b50-roast-release.apk`（57,139,194 B，sha256 `0a06b1a4…0365e2`，v2 签名 / RSA 4096）。
+第 7 节 1~16 条**全部完成**（阴影体系、供应商表、图标、状态栏、设置入口、导航动效、顶栏留白、
+卡片重构、预设菜单、通知/保活/完成弹窗、剧场光效…）。
+**接手先读 [`docs/HANDOVER.md`](docs/HANDOVER.md)**（5 分钟单：代码地图 / 发版 SOP / 坑 TOP10 / 下一步）。
+下一步建议：收集真实反馈做手感微调；把 `renderLocal` 接成 Python 失败的自动回退；等上游素材复活。
 
 ## 1. 已验证的事实（真机 logcat 实测，不是推测）
 
@@ -189,6 +190,7 @@ app/src/main/jniLibs/arm64-v8a/
 LICENSE / THIRD_PARTY_NOTICES.md   发布用协议（MIT + 第三方声明）
 README.md                     对外介绍；内部开发文档见 docs/DEVELOPMENT.md
 docs/DEVELOPMENT.md           构建环境 / aapt2 / 编译期坑 / 源码地图（原 README）
+docs/HANDOVER.md              **交接单**：接手 5 分钟单 / 发版 SOP / 坑 TOP10 / 下一步（新会话先读）
 
 tools/
 ├── fetch_assets.py              素材获取：本地 → 归档 zip → 上游下载（上游证书过期，默认跳过校验）
@@ -365,9 +367,10 @@ P=$(pidof com.b50.roast); ls /proc/$P/root/data/data/com.b50.roast/files/shots/
 
 **长期项（不阻塞发布）**：
 
-- 出图端到端约 40 秒（提示词 1.3s + AI 36s + 渲染 4s），瓶颈是推理模型；代码已传 `reasoning.effort=low`。
+- 出图端到端 **20~60 秒**（提示词 1.3s + AI 35~80s + 渲染 2~5s），瓶颈是推理模型；代码已传 `reasoning.effort=low`。
 - user prompt 7641 字（全量 831 首明细）—— **用户明确要求不压缩**，别自作主张改。
-- 生成页 `format`（png/jpg/webp）选择器未接通，渲染固定输出 png。
+- ~~生成页 `format`（png/jpg/webp）选择器未接通~~ —— **已接通并实测**（png 1.77 MB / jpg 556 KB / webp 389 KB，
+  magic 分别为 `89504E47` / `FFD8FFE0` / `RIFF..WEBP`，见「本轮已完成（打磨专场）」附 3）。
 - 资源包冻结 `cn:34274`（第 9 节第 1 条），等上游复活；`fetch_assets.py --probe` 可探测。
 - 上游 3 个本地化文件与上游有差（`check_upstream.py` 的 `·` 状态），值得逐个确认有无该搬的上游修复。
 
